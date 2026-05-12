@@ -31,11 +31,14 @@ Use the Task tool with these specialized subagents for appropriate tasks:
 ## Quick Start
 
 ```bash
-# Backend
+# Kill any existing servers on ports 3000 and 8001
+lsof -ti:3000,8001 | xargs kill -9 2>/dev/null || true
+
+# Backend (http://localhost:8001 | API docs: http://localhost:8001/docs)
 cd server
 uv run python main.py
 
-# Frontend
+# Frontend (http://localhost:3000)
 cd client
 npm install && npm run dev
 ```

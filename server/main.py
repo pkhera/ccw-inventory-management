@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
@@ -119,6 +119,30 @@ class CreatePurchaseOrderRequest(BaseModel):
     unit_cost: float
     expected_delivery_date: str
     notes: Optional[str] = None
+
+class RestockItem(BaseModel):
+    id: str
+    sku: str
+    name: str
+    category: str
+    warehouse: str
+    quantity_on_hand: int
+    reorder_point: int
+    target_quantity: int
+    restock_quantity: int
+    unit_cost: float
+    total_cost: float
+    priority_score: float
+    demand_trend: str
+    in_backlog: bool
+
+class RestockingRecommendation(BaseModel):
+    budget: float
+    total_cost: float
+    remaining_budget: float
+    items_count: int
+    items_skipped: int
+    recommendations: List[RestockItem]
 
 # API endpoints
 @app.get("/")
@@ -303,6 +327,68 @@ def get_monthly_trends():
     result = list(months.values())
     result.sort(key=lambda x: x['month'])
     return result
+
+@app.get("/api/recommendations/restock", response_model=RestockingRecommendation)
+def get_restocking_recommendations(budget: float = Query(..., gt=0, description="Budget in USD")):
+    """Get prioritized restocking recommendations within a given budget."""
+    backlog_skus = {b["item_sku"] for b in backlog_items}
+    forecast_map = {f["item_sku"]: f["trend"] for f in demand_forecasts}
+    trend_multipliers = {"increasing": 1.5, "stable": 1.0, "decreasing": 0.5}
+
+    candidates = []
+    for item in inventory_items:
+        target_qty = 2 * item["reorder_point"]
+        if item["quantity_on_hand"] >= target_qty:
+            continue
+        restock_qty = target_qty - item["quantity_on_hand"]
+        item_cost = round(restock_qty * item["unit_cost"], 2)
+
+        reorder_point = item["reorder_point"]
+        urgency = max(0, reorder_point - item["quantity_on_hand"]) / reorder_point if reorder_point > 0 else 0.0
+        trend = forecast_map.get(item["sku"], "no data")
+        trend_mult = trend_multipliers.get(trend, 1.0)
+        backlog_mult = 2.0 if item["sku"] in backlog_skus else 1.0
+        priority_score = round(urgency * trend_mult * backlog_mult, 4)
+
+        candidates.append(RestockItem(
+            id=item["id"],
+            sku=item["sku"],
+            name=item["name"],
+            category=item["category"],
+            warehouse=item["warehouse"],
+            quantity_on_hand=item["quantity_on_hand"],
+            reorder_point=reorder_point,
+            target_quantity=target_qty,
+            restock_quantity=restock_qty,
+            unit_cost=item["unit_cost"],
+            total_cost=item_cost,
+            priority_score=priority_score,
+            demand_trend=trend,
+            in_backlog=item["sku"] in backlog_skus,
+        ))
+
+    candidates.sort(key=lambda x: x.priority_score, reverse=True)
+
+    remaining = budget
+    chosen = []
+    skipped = 0
+    for candidate in candidates:
+        if candidate.total_cost <= remaining:
+            chosen.append(candidate)
+            remaining = round(remaining - candidate.total_cost, 2)
+        else:
+            skipped += 1
+
+    total_spent = round(budget - remaining, 2)
+    return RestockingRecommendation(
+        budget=budget,
+        total_cost=total_spent,
+        remaining_budget=remaining,
+        items_count=len(chosen),
+        items_skipped=skipped,
+        recommendations=chosen,
+    )
+
 
 if __name__ == "__main__":
     import uvicorn
