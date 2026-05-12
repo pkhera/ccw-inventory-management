@@ -25,6 +25,9 @@
           <router-link to="/reports" :class="{ active: $route.path === '/reports' }">
             Reports
           </router-link>
+          <router-link to="/restocking" :class="{ active: $route.path === '/restocking' }">
+            Restocking
+          </router-link>
         </nav>
         <LanguageSwitcher />
         <ProfileMenu
@@ -162,6 +165,8 @@ export default {
 </script>
 
 <style>
+@import "tailwindcss/utilities";
+
 * {
   margin: 0;
   padding: 0;
